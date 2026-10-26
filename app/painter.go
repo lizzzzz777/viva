@@ -1188,7 +1188,17 @@ func (painter *painter) applyClipping() {
 			triangle := triangles[next]
 			next++
 			if triangle.HasClip {
-				visible, cut := clipVisibility(triangleBounds(triangle.Points), triangle.ClipOf)
+				bounds := triangleBounds(triangle.Points)
+				if triangle.EdgeMask != 0 {
+					// Native renderers also cover half a device pixel outside the
+					// silhouette. Keep the scissor when that fringe meets a clip.
+					half := 0.5 / painter.canvas.PixelScale()
+					bounds.X -= half
+					bounds.Y -= half
+					bounds.Width += 2 * half
+					bounds.Height += 2 * half
+				}
+				visible, cut := clipVisibility(bounds, triangle.ClipOf)
 				if !visible {
 					continue
 				}

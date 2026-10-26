@@ -1,0 +1,66 @@
+name: vector coverage
+
+on:
+  push:
+    paths:
+      - 'internal/platform/**/shaders/**'
+      - 'headless/vector_aa_test.go'
+      - '.github/workflows/vector-coverage.yml'
+  pull_request:
+    paths:
+      - 'internal/platform/**'
+      - 'headless/**'
+      - 'app/painter.go'
+      - '.github/workflows/vector-coverage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vector-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Vulkan software renderer and compiler
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y glslc mesa-vulkan-drivers libvulkan1 libfontconfig1 libfreetype6 libharfbuzz0b
+      - name: Native coverage with shipped shaders
+        run: go test -tags vivahead ./headless -run '^TestVectorCoverageAtDeviceScales$' -v -count=1
+      - name: Compile D3D11 shaders
+        if: runner.os == 'Windows'
+        run: go run ./tools/windows-shaders
+      - name: Compile Metal shaders
+        if: runner.os == 'macOS'
+        run: |
+          xcrun -f metal || xcodebuild -downloadComponent MetalToolchain
+          sh tools/generate_darwin_shaders.sh
+      - name: Compile Vulkan shaders
+        if: runner.os == 'Linux'
+        run: sh tools/generate_linux_shaders.sh
+      - name: Native pixel coverage
+        run: go test -tags vivahead ./headless -run '^TestVectorCoverageAtDeviceScales$' -v -count=1
+      - name: Native static checks
+        run: go vet -tags vivahead ./headless/... ./app/... ./internal/platform/...
+      # Generated native binaries are checked in so applications need no shader
+      # compiler. Keep compiler output available for updating them from any host.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vector-shaders-${{ runner.os }}
+          path: |
+            internal/platform/darwin/shaders/scene.metallib
+            internal/platform/linux/shaders/*.spv
+            internal/platform/windows/shaders/*.dxbc
+            internal/platform/windows/shaders/manifest.json

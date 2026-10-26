@@ -215,11 +215,19 @@ func TestOutputPaths(t *testing.T) {
 	// Defaults land in [build] out, named for the executable, with the target in
 	// the name when it is not the machine's own.
 	native := loadPlan(t, dir, buildFlags{target: runtime.GOOS, arch: runtime.GOARCH}, "")
-	if err := native.outputPath(""); err != nil || native.out != absolute(filepath.Join(dir, "build", "fixture-notes")) {
+	nativeName := "fixture-notes"
+	if runtime.GOOS == "windows" {
+		nativeName += ".exe"
+	}
+	if err := native.outputPath(""); err != nil || native.out != absolute(filepath.Join(dir, "build", nativeName)) {
 		t.Errorf("host default = %q, %v", native.out, err)
 	}
 	cross := loadPlan(t, dir, buildFlags{target: "windows", arch: "amd64"}, "")
-	if err := cross.outputPath(""); err != nil || filepath.Base(cross.out) != "fixture-notes-windows-amd64.exe" {
+	windowsName := "fixture-notes-windows-amd64.exe"
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		windowsName = "fixture-notes.exe"
+	}
+	if err := cross.outputPath(""); err != nil || filepath.Base(cross.out) != windowsName {
 		t.Errorf("windows default = %q, %v", cross.out, err)
 	}
 	// An architecture other than the host's always puts the target in the name.
@@ -298,8 +306,11 @@ func TestBuildProducesAStrippedReproducibleProgram(t *testing.T) {
 		t.Fatal("two builds of the same source differ")
 	}
 	info, _ := os.Stat(first)
-	if info.Mode()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Error("the program is not executable")
+	}
+	if runtime.GOOS == "windows" && !bytes.HasPrefix(a, []byte("MZ")) {
+		t.Error("the program is not a Windows executable")
 	}
 	for _, want := range []string{"built ", "  target   " + runtime.GOOS + "/" + runtime.GOARCH, "  tags     alpha", "  size     ", ", stripped"} {
 		if !strings.Contains(report, want) {

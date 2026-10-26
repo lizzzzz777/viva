@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -59,7 +60,7 @@ func TestWindowsSigningNeedsOneWayAndTheFileToSign(t *testing.T) {
 	if data, err := os.ReadFile(got.certificate); err != nil || string(data) != "pfx bytes" {
 		t.Fatalf("scratch certificate: %q, %v", data, err)
 	}
-	if info, _ := os.Stat(got.certificate); info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(got.certificate); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("the scratch certificate is readable by others: %v", info.Mode())
 	}
 	got.cleanup()

@@ -87,6 +87,8 @@ type frameConstants struct {
 	TextMode  uint32
 	Bounds    [4]float32
 	TextColor [4]float32
+	PixelSize float32
+	Padding   [3]float32
 }
 
 type compositingBatchKind uint8
@@ -438,7 +440,7 @@ func (renderer *renderer) draw(width, height int, scale float32) error {
 	whole := scissorRect{Right: int32(width), Bottom: int32(height)}
 	comCall(renderer.context, 45, 1, uintptr(unsafe.Pointer(&whole)))
 	comCall(renderer.context, 24, 4)
-	frame := frameConstants{Width: float32(width) / scale, Height: float32(height) / scale}
+	frame := frameConstants{Width: float32(width) / scale, Height: float32(height) / scale, PixelSize: 1 / scale}
 	comCall(renderer.context, 48, renderer.constants, 0, 0, uintptr(unsafe.Pointer(&frame)), 0, 0)
 	comCall(renderer.context, 7, 0, 1, uintptr(unsafe.Pointer(&renderer.constants)))  // the vertex shaders
 	comCall(renderer.context, 16, 0, 1, uintptr(unsafe.Pointer(&renderer.constants))) // the text pixel shader

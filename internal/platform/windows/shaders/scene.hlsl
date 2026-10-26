@@ -1,6 +1,6 @@
 // textMode is 0 when the label texture is premultiplied color, 1 when it holds the coverage
 // of ClearType text in its three color channels, to be blended with textColor per channel.
-cbuffer Frame : register(b0) { float2 viewport; uint instanceOffset; uint textMode; float4 textBounds; float4 textColor; };
+cbuffer Frame : register(b0) { float2 viewport; uint instanceOffset; uint textMode; float4 textBounds; float4 textColor; float pixelSize; float3 framePadding; };
 // shade1 and shade2 are a triangle's colors at its second and third corner; color is the first's.
 struct Rectangle { float4 bounds; float4 color; float4 style; float4 shade1; float4 shade2; };
 StructuredBuffer<Rectangle> rectangles : register(t0);
@@ -15,6 +15,26 @@ float edgeDistance(float2 p, float2 a, float2 b) {
     float2 edge = b - a;
     float length = max(sqrt(edge.x*edge.x + edge.y*edge.y), 1e-6);
     return (edge.x*(p.y-a.y) - edge.y*(p.x-a.x)) / length;
+}
+float cross2(float2 a, float2 b) { return a.x*b.y - a.y*b.x; }
+float segmentDistance(float2 p, float2 a, float2 b) {
+    float2 edge = b - a;
+    float along = saturate(dot(p - a, edge) / max(dot(edge, edge), 1e-12));
+    return length(p - a - along * edge);
+}
+// Move only silhouette edges out by half a device pixel. Unmarked shared edges
+// keep their original supporting line, so the hardware top-left rule still
+// assigns each fragment to exactly one triangle. Fragment distances and color
+// interpolation stay measured against the original (unexpanded) triangle.
+float2 fringeVertex(float2 previous, float2 position, float2 next, uint previousEdge, uint nextEdge, uint mask) {
+    float2 before = position - previous, after = next - position;
+    float area = cross2(before, after);
+    if (abs(area) < 1e-8 || mask == 0) return position;
+    float orientation = area > 0 ? 1 : -1;
+    float h = 0.5 * pixelSize * orientation;
+    float first = (mask & previousEdge) != 0 ? -h * length(before) : 0;
+    float second = (mask & nextEdge) != 0 ? -h * length(after) : 0;
+    return position + (first * after - second * before) / area;
 }
 Vertex rectangleVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID) {
     Rectangle rectangle = rectangles[instanceOffset + instance];
@@ -34,10 +54,19 @@ Vertex rectangleVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
             rectangle.bounds.zw,
             rectangle.style.xz,
         };
-        pixel = vertex < 3 ? points[vertex] : points[0];
+        uint index = vertex < 3 ? vertex : 0;
+        uint edgeMask = (uint)(rectangle.style.w + 0.5) - 1;
+        uint previous = (index + 2) % 3;
+        pixel = fringeVertex(points[previous], points[index], points[(index + 1) % 3], 1u << previous, 1u << index, edgeMask);
         // The rasterizer interpolates the corner colors across the face, so a flat
         // triangle (all three equal) is unchanged.
-        color = vertex == 1 ? rectangle.shade1 : (vertex == 2 ? rectangle.shade2 : rectangle.color);
+        float2 ab = points[1] - points[0], ac = points[2] - points[0];
+        float area = cross2(ab, ac);
+        if (abs(area) >= 1e-8) {
+            float2 delta = pixel - points[0];
+            color = rectangle.color + cross2(delta, ac) / area * (rectangle.shade1 - rectangle.color)
+                + cross2(ab, delta) / area * (rectangle.shade2 - rectangle.color);
+        }
         local = 0;
         size = 0;
         radius = 0;
@@ -120,8 +149,17 @@ float4 rectangleFragment(Vertex input) : SV_Target {
         float d1 = (edgeMask & 2u) != 0 ? sign * edgeDistance(input.frag, input.triB, input.triC) : 1e6;
         float d2 = (edgeMask & 4u) != 0 ? sign * edgeDistance(input.frag, input.triC, input.triA) : 1e6;
         float inside = min(d0, min(d1, d2));
+        if (inside < 0) {
+            // Offset supporting lines have long miters at acute vertices. Only
+            // the half-pixel neighborhood of the actual segments is coverage.
+            float s0 = (edgeMask & 1u) != 0 ? segmentDistance(input.frag, input.triA, input.triB) : 1e6;
+            float s1 = (edgeMask & 2u) != 0 ? segmentDistance(input.frag, input.triB, input.triC) : 1e6;
+            float s2 = (edgeMask & 4u) != 0 ? segmentDistance(input.frag, input.triC, input.triA) : 1e6;
+            inside = -min(s0, min(s1, s2));
+        }
         float coverage = edgeMask == 0 ? 1 : saturate(0.5 + inside / meshPixel);
-        return float4(input.color.rgb*coverage*input.color.a, input.color.a*coverage);
+        float4 shade = saturate(input.color);
+        return float4(shade.rgb*coverage*shade.a, shade.a*coverage);
     }
     if (input.triB.y > 0) {
         return shadowColor(input, shapePixel);

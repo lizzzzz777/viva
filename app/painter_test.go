@@ -1146,6 +1146,31 @@ func TestClippedStrokeReachesTheRendererWholeWithItsClip(t *testing.T) {
 	}
 }
 
+func TestVectorFringeKeepsItsClip(t *testing.T) {
+	for _, scale := range []float32{1, 1.25, 1.5, 2, 3} {
+		for _, x := range []float32{-0.25, 0.25} {
+			var canvas ui.Canvas
+			canvas.SetPixelScale(scale)
+			clip := ui.Rect{Width: 10, Height: 10}
+			canvas.Clip(clip)
+			// The first edge is just outside or just inside the clip. In both
+			// cases its AA fringe intersects the clip and must keep the scissor.
+			canvas.DrawPath(ui.NewPath(10, 10, ui.MoveTo(x/scale, 2), ui.LineTo(8, 2), ui.LineTo(x/scale, 8), ui.ClosePath()), clip, ui.PathStyle{Fill: ui.Color{Alpha: 1}})
+			canvas.Unclip()
+			painter := newTestPainter(t, &canvas, Config{Title: "test", Width: 10, Height: 10})
+			instances := painter.renderer.Rectangles()
+			if len(instances) == 0 {
+				t.Fatal("visible fringe was culled")
+			}
+			for _, instance := range instances {
+				if !instance.Clipped || instance.Clip != scene.Rect(clip) {
+					t.Fatalf("scale %g, offset %g: fringe lost its clip: %+v", scale, x, instance)
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkPainterVirtualizedScroll(b *testing.B) {
 	var canvas ui.Canvas
 	config := Config{Title: "bench", Width: 640, Height: 560}

@@ -492,7 +492,7 @@ func (sceneState *vulkanScene) record(renderer *vulkanRenderer, command uintptr,
 	renderer.api.cmdSetScissor(command, 0, 1, &scratch.scissor)
 	// The viewport is the target in device pixels; the scene is positioned in
 	// logical ones, so the shader divides by the target's size in those.
-	scratch.sceneFrame = [4]float32{float32(extent.Width) / scale, float32(extent.Height) / scale}
+	scratch.sceneFrame = [4]float32{float32(extent.Width) / scale, float32(extent.Height) / scale, 1 / scale}
 	renderer.api.cmdPushConstants(command, sceneState.pipelineLayout, vkShaderStageVertex, 0, uint32(unsafe.Sizeof(scratch.sceneFrame)), unsafe.Pointer(&scratch.sceneFrame[0]))
 	scratch.offset = 0
 	renderer.api.cmdBindVertexBuffers(command, 0, 1, &sceneState.buffer, &scratch.offset)

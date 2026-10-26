@@ -160,8 +160,17 @@ var zipTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 // Zip archives the bundle with the .app directory as the top-level entry,
 // keeping file modes (the program stays executable) and using fixed timestamps.
 func Zip(app, archive string) error {
-	if _, err := os.Stat(filepath.Join(app, "Contents", "Info.plist")); err != nil {
+	plist, err := os.ReadFile(filepath.Join(app, "Contents", "Info.plist"))
+	if err != nil {
 		return fmt.Errorf("appbundle: %s is not an application bundle", app)
+	}
+	executable, err := plistExecutable(plist)
+	if err != nil {
+		return err
+	}
+	program := filepath.Join("Contents", "MacOS", executable)
+	if info, err := os.Lstat(filepath.Join(app, program)); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("appbundle: executable %s is not a regular file", executable)
 	}
 	out, err := os.Create(archive)
 	if err != nil {
@@ -197,7 +206,9 @@ func Zip(app, archive string) error {
 			return fmt.Errorf("appbundle: %s is not a regular file", path)
 		}
 		mode := fs.FileMode(0o644)
-		if info.Mode()&0o111 != 0 {
+		// Windows cannot carry Unix execute bits. The declared main program
+		// must still be executable after the archive is unpacked on macOS.
+		if relative == program || info.Mode()&0o111 != 0 {
 			mode = 0o755
 		}
 		header.SetMode(mode)

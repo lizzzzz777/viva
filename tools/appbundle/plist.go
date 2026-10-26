@@ -8,8 +8,66 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"sort"
+	"strings"
 )
+
+// Read only the top-level executable, not similarly named nested dictionary keys.
+func plistExecutable(data []byte) (string, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	var stack []string
+	var key string
+	var executable string
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("appbundle: invalid Info.plist: %w", err)
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			if len(stack) == 2 && stack[0] == "plist" && stack[1] == "dict" {
+				if element.Name.Local == "key" {
+					if err := decoder.DecodeElement(&key, &element); err != nil {
+						return "", err
+					}
+					continue
+				}
+				if key == "CFBundleExecutable" {
+					if executable != "" {
+						return "", fmt.Errorf("appbundle: duplicate CFBundleExecutable")
+					}
+					if element.Name.Local != "string" {
+						return "", fmt.Errorf("appbundle: CFBundleExecutable must be a string")
+					}
+					var name string
+					if err := decoder.DecodeElement(&name, &element); err != nil {
+						return "", err
+					}
+					if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\:\x00") {
+						return "", fmt.Errorf("appbundle: invalid CFBundleExecutable %q", name)
+					}
+					executable = name
+					key = ""
+					continue
+				}
+				key = ""
+			}
+			stack = append(stack, element.Name.Local)
+		case xml.EndElement:
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	if executable != "" {
+		return executable, nil
+	}
+	return "", fmt.Errorf("appbundle: Info.plist has no CFBundleExecutable")
+}
 
 // KeyValue is one extra Info.plist string entry.
 type KeyValue struct {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"go/parser"
 	"go/token"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"unicode"
 
@@ -223,12 +225,12 @@ func TestManifestDeterministicAndTracksSourceNotTests(t *testing.T) {
 	if err != nil || first.Revision == second.Revision {
 		t.Fatalf("source mutation not detected: %v", err)
 	}
-	if err := os.Symlink(filepath.Join(root, "go.mod"), filepath.Join(root, "components/link.go")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := sourceManifest(root); err == nil {
-		t.Fatal("accepted symlink source")
-	}
+	t.Run("RejectsSymlinkSource", func(t *testing.T) {
+		docTestSymlink(t, filepath.Join(root, "go.mod"), filepath.Join(root, "components/link.go"))
+		if _, err := sourceManifest(root); err == nil {
+			t.Fatal("accepted symlink source")
+		}
+	})
 }
 
 func TestOutputBoundaryAndPublication(t *testing.T) {
@@ -268,12 +270,22 @@ func TestOutputBoundaryAndPublication(t *testing.T) {
 	if _, err := os.Stat(staging + "-previous"); !os.IsNotExist(err) {
 		t.Fatal("previous output leaked")
 	}
-	link := filepath.Join(root, "build", "link")
-	if err := os.Symlink(output, link); err != nil {
+	t.Run("RejectsSymlinkOutput", func(t *testing.T) {
+		link := filepath.Join(root, "build", "link")
+		docTestSymlink(t, output, link)
+		if err := validateOutput(root, filepath.Join(link, "docs")); err == nil {
+			t.Fatal("accepted symlink output")
+		}
+	})
+}
+
+func docTestSymlink(t *testing.T, target, path string) {
+	t.Helper()
+	if err := os.Symlink(target, path); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skipf("Windows account lacks symbolic-link privilege: %v", err)
+		}
 		t.Fatal(err)
-	}
-	if err := validateOutput(root, filepath.Join(link, "docs")); err == nil {
-		t.Fatal("accepted symlink output")
 	}
 }
 

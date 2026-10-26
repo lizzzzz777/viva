@@ -11,7 +11,8 @@ layout(location = 4) in vec4 inShade2;
 
 layout(push_constant) uniform Frame {
     vec2 viewport;
-    vec2 unused;
+    float pixelSize;
+    float unused;
 } frame;
 
 layout(location = 0) out vec4 outColor;
@@ -33,6 +34,19 @@ const vec2 corners[6] = vec2[](
     vec2(1.0, 1.0)
 );
 
+float cross2(vec2 a, vec2 b) { return a.x*b.y - a.y*b.x; }
+// Expand silhouette edges only; shared edges keep their supporting line.
+vec2 fringeVertex(vec2 previous, vec2 position, vec2 next, uint previousEdge, uint nextEdge, uint mask) {
+    vec2 before = position - previous, after = next - position;
+    float area = cross2(before, after);
+    if (abs(area) < 1e-8 || mask == 0u) return position;
+    float orientation = area > 0.0 ? 1.0 : -1.0;
+    float h = 0.5 * frame.pixelSize * orientation;
+    float first = (mask & previousEdge) != 0u ? -h * length(before) : 0.0;
+    float second = (mask & nextEdge) != 0u ? -h * length(after) : 0.0;
+    return position + (first * after - second * before) / area;
+}
+
 void main() {
     vec2 pixel;
     vec2 localPixel;
@@ -45,8 +59,18 @@ void main() {
     vec4 color = inColor;
     if (inStyle.w > 0.5) {
         vec2 points[3] = vec2[](inBounds.xy, inBounds.zw, inStyle.xz);
-        pixel = gl_VertexIndex < 3 ? points[gl_VertexIndex] : points[0];
-        color = gl_VertexIndex == 1 ? inShade1 : (gl_VertexIndex == 2 ? inShade2 : inColor);
+        uint index = gl_VertexIndex < 3 ? uint(gl_VertexIndex) : 0u;
+        uint edgeMask = uint(inStyle.w + 0.5) - 1u;
+        uint previous = (index + 2u) % 3u;
+        pixel = fringeVertex(points[previous], points[index], points[(index + 1u) % 3u], 1u << previous, 1u << index, edgeMask);
+        // Extrapolate corner colors so interpolation stays on the original mesh.
+        vec2 ab = points[1] - points[0], ac = points[2] - points[0];
+        float area = cross2(ab, ac);
+        if (abs(area) >= 1e-8) {
+            vec2 delta = pixel - points[0];
+            color = inColor + cross2(delta, ac) / area * (inShade1 - inColor)
+                + cross2(ab, delta) / area * (inShade2 - inColor);
+        }
         localPixel = vec2(0.0);
         size = vec2(0.0);
         radius = 0.0;

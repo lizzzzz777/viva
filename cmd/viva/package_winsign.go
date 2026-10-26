@@ -118,7 +118,7 @@ func resolveWindowsSigning(options signingOptions, environment func(string) stri
 		if err != nil {
 			return signing, errors.New("WINDOWS_CERTIFICATE is not base64")
 		}
-		dir, err := os.MkdirTemp("", "viva-winsign-")
+		dir, err := signingTempDir()
 		if err != nil {
 			return signing, err
 		}
@@ -165,7 +165,7 @@ func (signing windowsSigning) signFile(run toolRunner, path string) error {
 // changing the one it reads, then replaces the original. The password goes in a
 // private file, not on the command line.
 func (signing windowsSigning) signWithOpenSSL(run toolRunner, path string) error {
-	scratch, err := os.MkdirTemp("", "viva-winsign-")
+	scratch, err := signingTempDir()
 	if err != nil {
 		return err
 	}

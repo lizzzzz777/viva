@@ -3,6 +3,7 @@
 package windows
 
 import (
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -78,22 +79,30 @@ var getWindowLongPtr = user.NewProc("GetWindowLongPtrW")
 func openDropWindow(t *testing.T, accepts bool, events chan platform.FileDropEvent) (*windowState, func()) {
 	t.Helper()
 	done := make(chan error, 1)
+	ready := make(chan *windowState, 1)
 	go func() {
-		done <- Run(platform.Config{
-			Title: "drop", Width: 300, Height: 200,
-			OnFileDrop: func(event platform.FileDropEvent) (platform.Frame, bool, error) {
-				events <- event
-				return platform.Frame{}, accepts, nil
-			},
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		done <- RunApplication(func(application platform.Application) error {
+			window, err := application.OpenWindow(platform.Config{
+				Title: "drop", Width: 300, Height: 200,
+				OnFileDrop: func(event platform.FileDropEvent) (platform.Frame, bool, error) {
+					events <- event
+					return platform.Frame{}, accepts, nil
+				},
+			})
+			if err == nil {
+				ready <- window.(*nativeWindow).state
+			}
+			return err
 		})
 	}()
 	var state *windowState
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if state = active.Load(); state != nil && state.window != 0 && state.ready {
-			break
-		}
-	}
-	if state == nil || !state.ready {
+	select {
+	case state = <-ready:
+	case err := <-done:
+		t.Fatalf("window failed to open: %v", err)
+	case <-time.After(10 * time.Second):
 		t.Fatal("the window never opened")
 	}
 	return state, func() {

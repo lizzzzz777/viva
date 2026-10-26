@@ -257,7 +257,7 @@ func TestAssembleBuildsTheBundleLayout(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	program, err := os.Stat(filepath.Join(dest, "Contents", "MacOS", "viva-gallery"))
-	if err != nil || program.Mode()&0o111 == 0 {
+	if err != nil || !program.Mode().IsRegular() || runtime.GOOS != "windows" && program.Mode()&0o111 == 0 {
 		t.Fatalf("the program is missing or not executable: %v %v", program, err)
 	}
 	plist, err := os.ReadFile(filepath.Join(dest, "Contents", "Info.plist"))

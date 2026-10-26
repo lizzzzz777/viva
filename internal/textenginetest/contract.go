@@ -186,6 +186,9 @@ func scales(t *testing.T, engine ui.TextEngine) {
 }
 
 func allocations(t *testing.T, engine ui.TextEngine) {
+	if raceEnabled {
+		t.Skip("race instrumentation intentionally drops sync.Pool entries; allocation budgets run without -race")
+	}
 	const value = "192.168.1.1 主机 abc שלום"
 	dst := make([]ui.TextSpan, 0, 8)
 	query := func() {

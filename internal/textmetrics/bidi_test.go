@@ -196,6 +196,9 @@ func TestRightToLeftDirection(t *testing.T) {
 }
 
 func TestBidiCaretAndSelectionAreAllocationFreeWhenWarm(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation intentionally drops sync.Pool entries; allocation budgets run without -race")
+	}
 	value := "abc שלום עולם def مرحبا"
 	var spans [8]Span
 	Selection(spans[:0], value, 14, 0, 2, 12)

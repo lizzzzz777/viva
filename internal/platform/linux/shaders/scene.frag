@@ -17,6 +17,11 @@ float edgeDistance(vec2 point, vec2 from, vec2 to) {
     float edgeLength = max(length(edge), 1e-6);
     return (edge.x * (point.y - from.y) - edge.y * (point.x - from.x)) / edgeLength;
 }
+float segmentDistance(vec2 p, vec2 a, vec2 b) {
+    vec2 edge = b - a;
+    float along = clamp(dot(p - a, edge) / max(dot(edge, edge), 1e-12), 0.0, 1.0);
+    return length(p - a - along * edge);
+}
 
 // Logical pixels per device pixel at this fragment. Edges feathered over a
 // fixed logical band smear across several device pixels on a scaled display;
@@ -64,9 +69,18 @@ void main() {
         float distance1 = (edgeMask & 2u) != 0u ? orientation * edgeDistance(inFragment, inTriangleB, inTriangleC) : 1e6;
         float distance2 = (edgeMask & 4u) != 0u ? orientation * edgeDistance(inFragment, inTriangleC, inTriangleA) : 1e6;
         float inside = min(distance0, min(distance1, distance2));
-        float coverage = edgeMask == 0 ? 1.0 : clamp(0.5 + inside / devicePixel(inFragment), 0.0, 1.0);
-        float alpha = inColor.a * coverage;
-        outColor = vec4(inColor.rgb * alpha, alpha);
+        float pixel = devicePixel(inFragment);
+        if (inside < 0.0) {
+            // Acute offset-line miters must not paint beyond the actual ends.
+            float s0 = (edgeMask & 1u) != 0u ? segmentDistance(inFragment, inTriangleA, inTriangleB) : 1e6;
+            float s1 = (edgeMask & 2u) != 0u ? segmentDistance(inFragment, inTriangleB, inTriangleC) : 1e6;
+            float s2 = (edgeMask & 4u) != 0u ? segmentDistance(inFragment, inTriangleC, inTriangleA) : 1e6;
+            inside = -min(s0, min(s1, s2));
+        }
+        float coverage = edgeMask == 0 ? 1.0 : clamp(0.5 + inside / pixel, 0.0, 1.0);
+        vec4 shade = clamp(inColor, 0.0, 1.0);
+        float alpha = shade.a * coverage;
+        outColor = vec4(shade.rgb * alpha, alpha);
         return;
     }
     if (inTriangleB.y > 0.0) {

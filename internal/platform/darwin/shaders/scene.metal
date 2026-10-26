@@ -24,11 +24,29 @@ struct VertexOutput {
     uint triangleMask [[flat]];
 };
 
+static float cross2(float2 a, float2 b) { return a.x*b.y - a.y*b.x; }
+static float segmentDistance(float2 p, float2 a, float2 b) {
+    float2 edge = b - a;
+    float along = saturate(dot(p - a, edge) / max(dot(edge, edge), 1e-12));
+    return length(p - a - along * edge);
+}
+// Expand silhouette edges only; shared edges keep their supporting line.
+static float2 fringeVertex(float2 previous, float2 position, float2 next, uint previousEdge, uint nextEdge, uint mask, float pixelSize) {
+    float2 before = position - previous, after = next - position;
+    float area = cross2(before, after);
+    if (abs(area) < 1e-8 || mask == 0u) return position;
+    float orientation = area > 0.0 ? 1.0 : -1.0;
+    float h = 0.5 * pixelSize * orientation;
+    float first = (mask & previousEdge) != 0u ? -h * length(before) : 0.0;
+    float second = (mask & nextEdge) != 0u ? -h * length(after) : 0.0;
+    return position + (first * after - second * before) / area;
+}
+
 vertex VertexOutput viva_rectangle_vertex(
     uint vertexID [[vertex_id]],
     uint instanceID [[instance_id]],
     const device RectangleInstance *instances [[buffer(0)]],
-    constant float2 &viewportSize [[buffer(1)]]) {
+    constant float4 &viewportSize [[buffer(1)]]) {
     constexpr float2 corners[6] = {
         float2(0.0, 0.0),
         float2(1.0, 0.0),
@@ -60,8 +78,18 @@ vertex VertexOutput viva_rectangle_vertex(
             instance.bounds.zw,
             instance.style.xz,
         };
-        pixel = vertexID < 3 ? points[vertexID] : points[0];
-        color = vertexID == 1 ? instance.shade1 : (vertexID == 2 ? instance.shade2 : instance.color);
+        uint index = vertexID < 3 ? vertexID : 0u;
+        uint edgeMask = uint(instance.style.w + 0.5) - 1u;
+        uint previous = (index + 2u) % 3u;
+        pixel = fringeVertex(points[previous], points[index], points[(index + 1u) % 3u], 1u << previous, 1u << index, edgeMask, viewportSize.z);
+        // Extrapolate corner colors so interpolation stays on the original mesh.
+        float2 ab = points[1] - points[0], ac = points[2] - points[0];
+        float area = cross2(ab, ac);
+        if (abs(area) >= 1e-8) {
+            float2 delta = pixel - points[0];
+            color = instance.color + cross2(delta, ac) / area * (instance.shade1 - instance.color)
+                + cross2(ab, delta) / area * (instance.shade2 - instance.color);
+        }
         localPixel = 0.0;
         size = 0.0;
         radius = 0.0;
@@ -162,8 +190,17 @@ fragment float4 viva_rectangle_fragment(VertexOutput input [[stage_in]]) {
         float d1 = (edgeMask & 2u) != 0u ? sign * edgeDistance(input.fragPixel, input.triB, input.triC) : 1e6;
         float d2 = (edgeMask & 4u) != 0u ? sign * edgeDistance(input.fragPixel, input.triC, input.triA) : 1e6;
         float inside = min(d0, min(d1, d2));
-        float coverage = edgeMask == 0 ? 1.0 : saturate(0.5 + inside / devicePixel(input.fragPixel));
-        return float4(input.color.rgb, input.color.a * coverage);
+        float pixel = devicePixel(input.fragPixel);
+        if (inside < 0.0) {
+            // Acute offset-line miters must not paint beyond the actual ends.
+            float s0 = (edgeMask & 1u) != 0u ? segmentDistance(input.fragPixel, input.triA, input.triB) : 1e6;
+            float s1 = (edgeMask & 2u) != 0u ? segmentDistance(input.fragPixel, input.triB, input.triC) : 1e6;
+            float s2 = (edgeMask & 4u) != 0u ? segmentDistance(input.fragPixel, input.triC, input.triA) : 1e6;
+            inside = -min(s0, min(s1, s2));
+        }
+        float coverage = edgeMask == 0 ? 1.0 : saturate(0.5 + inside / pixel);
+        float4 shade = saturate(input.color);
+        return float4(shade.rgb, shade.a * coverage);
     }
     if (input.triB.y > 0.0) {
         return shadowColor(input);
