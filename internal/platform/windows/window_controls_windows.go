@@ -165,6 +165,8 @@ func (state *windowState) overMaximizeButton(x, y, width float32) bool {
 // reports whether it did. A press is taken from the system, which would maximize
 // the window itself, and the application's button does it from its own click; the
 // window captures the pointer so the release reaches the button wherever it comes.
+// The messages reach the application as client mouse messages, but the pointer
+// never counts as being in the client area (see forwardClientMouse).
 func (state *windowState) maximizeButtonMessage(kind, hit, screen uintptr) bool {
 	switch kind {
 	case wmNCMouseMove, wmNCLButtonDown, wmNCLButtonUp, wmNCLButtonDblClk:
@@ -199,19 +201,35 @@ func (state *windowState) maximizeButtonMessage(kind, hit, screen uintptr) bool 
 			trackMouseEvent.Call(uintptr(unsafe.Pointer(&track)))
 			state.ncTracking = true
 		}
-		// The move is handled as a client move, without arming the client's own
-		// leave tracking, which would fire at once for a pointer that is not in the
-		// client area.
-		armed := state.tracking
-		state.tracking = true
-		windowProc(state.window, wmMouseMove, 0, client)
-		state.tracking = armed
+		state.forwardClientMouse(wmMouseMove, 0, client)
 	case wmNCLButtonDown, wmNCLButtonDblClk:
-		windowProc(state.window, wmLeftDown, mkLButton, client)
+		state.forwardClientMouse(wmLeftDown, mkLButton, client)
 	case wmNCLButtonUp:
-		windowProc(state.window, wmLeftUp, 0, client)
+		state.forwardClientMouse(wmLeftUp, 0, client)
 	}
 	return true
+}
+
+// clientMessage forwards a client mouse message to the window: windowProc. It
+// is a variable so that a test can see what is forwarded and with which
+// tracking state; it is assigned in init because windowProc itself calls
+// forwardClientMouse through maximizeButtonMessage.
+var clientMessage func(window, kind, first, second uintptr) uintptr
+
+func init() { clientMessage = windowProc }
+
+// forwardClientMouse hands the application the client mouse message that a
+// non-client message over the maximize button stands for. The client's own
+// leave tracking stays off while it runs: the point is one the window answers as
+// non-client, so a client TrackMouseEvent registered there reports the pointer
+// gone at once, and that leave would cancel the application's press before its
+// button could see the release. The window's non-client tracking, armed by the
+// first move over the button, reports the pointer leaving the button instead.
+func (state *windowState) forwardClientMouse(kind, first, second uintptr) {
+	armed := state.tracking
+	state.tracking = true
+	clientMessage(state.window, kind, first, second)
+	state.tracking = armed
 }
 
 // pressAt is what the application does with a press at a window point.

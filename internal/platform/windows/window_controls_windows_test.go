@@ -94,3 +94,51 @@ func TestTheMaximizeButtonIsOnlyWhereTheApplicationDrawsAControl(t *testing.T) {
 		t.Error("a window that draws no buttons has no maximize button")
 	}
 }
+
+// The maximize button is drawn as a client control but the window answers the
+// system that it is a non-client button, so that Windows 11 shows its snap
+// layouts there. The press and the release therefore reach the application as
+// client mouse messages at a point the system does not call client area. The
+// client's own mouse-leave tracking must stay off while they are forwarded: a
+// client TrackMouseEvent registered there reports the pointer gone at once, and
+// the leave cancels the press before the button sees the release, which leaves
+// the button looking pressed for an instant and doing nothing.
+func TestAPressOnTheMaximizeButtonKeepsTheClientLeaveTrackingOff(t *testing.T) {
+	const window = ^uintptr(0)
+	state := &windowState{
+		ready: true, window: window, scale: 1,
+		config: platform.Config{
+			WindowMode:     platform.WindowCustomTitlebar,
+			TitlebarHeight: 32,
+			Actions:        &platform.WindowActions{},
+			PressAt:        func(x, y float32) platform.PressKind { return platform.PressControl },
+		},
+	}
+	previous := active.Load()
+	windowStates.Store(window, state)
+	defer func() { windowStates.Delete(window); active.Store(previous) }()
+
+	var forwarded []uintptr
+	leaveTrackingOff := true
+	previousMessage := clientMessage
+	clientMessage = func(window, kind, first, second uintptr) uintptr {
+		forwarded = append(forwarded, kind)
+		leaveTrackingOff = leaveTrackingOff && state.tracking
+		return 0
+	}
+	defer func() { clientMessage = previousMessage }()
+
+	at := uintptr(uint16(10)) | uintptr(uint16(18))<<16
+	windowProc(window, wmNCLButtonDown, htMaxButton, at)
+	windowProc(window, wmNCLButtonUp, htMaxButton, at)
+
+	if len(forwarded) != 2 || forwarded[0] != wmLeftDown || forwarded[1] != wmLeftUp {
+		t.Fatalf("forwarded %v, want the press and the release", forwarded)
+	}
+	if !leaveTrackingOff {
+		t.Error("the press reached the application with the client's mouse-leave tracking free to arm, whose leave cancels the press before the release")
+	}
+	if state.tracking {
+		t.Error("the press left the client's mouse-leave tracking on")
+	}
+}
